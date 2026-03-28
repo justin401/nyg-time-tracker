@@ -204,11 +204,40 @@ export default function TimeTracker({ session, onLogout }) {
     showStatus("Project added!", C.green);
   };
 
+  const openEditPrj = () => {
+    if (!proj) return;
+    setForm({ name: proj.name, jRate: String(proj.j_rate || 75), sRate: String(proj.s_rate || 60) });
+    setPanel("editPrj");
+  };
+
+  const saveEditPrj = async () => {
+    if (!form.name.trim()) return;
+    const updates = { name: form.name, j_rate: parseFloat(form.jRate) || 75, s_rate: parseFloat(form.sRate) || 60 };
+    const { error } = await supabase.from("projects").update(updates).eq("id", activePrj);
+    if (error) return showStatus("Update failed: " + error.message, C.red);
+    setProjects(projects.map(p => p.id === activePrj ? { ...p, ...updates } : p));
+    setPanel(null);
+    showStatus("Project updated!", C.green);
+  };
+
   const toggleArchive = async (id, archived) => {
     const { error } = await supabase.from("projects").update({ archived: !archived }).eq("id", id);
     if (error) return showStatus("Update failed: " + error.message, C.red);
     setProjects(projects.map(p => p.id === id ? { ...p, archived: !archived } : p));
     showStatus(archived ? "Project restored!" : "Project archived!", C.green);
+  };
+
+  const deleteProject = async (id) => {
+    if (!confirm("Delete this project and ALL its time entries? This cannot be undone.")) return;
+    const { error: entryErr } = await supabase.from("time_entries").delete().eq("project_id", id);
+    if (entryErr) return showStatus("Failed to delete entries: " + entryErr.message, C.red);
+    const { error } = await supabase.from("projects").delete().eq("id", id);
+    if (error) return showStatus("Delete failed: " + error.message, C.red);
+    const remaining = projects.filter(p => p.id !== id);
+    setProjects(remaining);
+    setEntries(entries.filter(e => e.project_id !== id));
+    if (activePrj === id) setActivePrj(remaining[0]?.id || null);
+    showStatus("Project deleted!", C.green);
   };
 
   // ── EXPORT / IMPORT ──
@@ -372,6 +401,21 @@ export default function TimeTracker({ session, onLogout }) {
           </Card>
         )}
 
+        {panel === "editPrj" && (
+          <Card glow={C.glow} style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: C.accent, marginBottom: 16 }}>Edit Project</div>
+            <div style={{ marginBottom: 12 }}><Lbl>Project Name</Lbl><Inp value={form.name || ""} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
+            <div className="form-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
+              <div><Lbl>Justin's Rate ($/hr)</Lbl><Inp type="number" value={form.jRate || ""} onChange={e => setForm({ ...form, jRate: e.target.value })} /></div>
+              <div><Lbl>Sam's Rate ($/hr)</Lbl><Inp type="number" value={form.sRate || ""} onChange={e => setForm({ ...form, sRate: e.target.value })} /></div>
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <Btn bg={C.accent} glow={C.glowSm} onClick={saveEditPrj} disabled={!form.name?.trim()} style={{ flex: 1 }}>Save Changes</Btn>
+              <Btn bg={C.card2} onClick={() => setPanel(null)}>Cancel</Btn>
+            </div>
+          </Card>
+        )}
+
         {/* Dashboard */}
         {view === "dashboard" && (
           <>
@@ -429,11 +473,12 @@ export default function TimeTracker({ session, onLogout }) {
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
               <div style={{ fontSize: 14, fontWeight: 700 }}>All Time Entries ({pe.length})</div>
-              {proj && !proj.archived && (
-                <button onClick={() => toggleArchive(proj.id, proj.archived)} style={{ fontSize: 11, color: C.orange, background: "none", border: `1px solid ${C.orange}44`, borderRadius: 4, padding: "4px 12px", cursor: "pointer" }}>Archive This Project</button>
-              )}
-              {proj && proj.archived && (
-                <button onClick={() => toggleArchive(proj.id, proj.archived)} style={{ fontSize: 11, color: C.green, background: "none", border: `1px solid ${C.green}44`, borderRadius: 4, padding: "4px 12px", cursor: "pointer" }}>Restore Project</button>
+              {proj && (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={openEditPrj} style={{ fontSize: 11, color: C.accent, background: "none", border: `1px solid ${C.accent}44`, borderRadius: 4, padding: "4px 12px", cursor: "pointer" }}>Edit Project</button>
+                  <button onClick={() => toggleArchive(proj.id, proj.archived)} style={{ fontSize: 11, color: proj.archived ? C.green : C.orange, background: "none", border: `1px solid ${proj.archived ? C.green : C.orange}44`, borderRadius: 4, padding: "4px 12px", cursor: "pointer" }}>{proj.archived ? "Restore" : "Archive"}</button>
+                  <button onClick={() => deleteProject(proj.id)} style={{ fontSize: 11, color: C.red, background: "none", border: `1px solid ${C.red}44`, borderRadius: 4, padding: "4px 12px", cursor: "pointer" }}>Delete</button>
+                </div>
               )}
             </div>
             {pe.length === 0 && <div style={{ color: C.dim, textAlign: "center", padding: 40 }}>No entries yet.</div>}
