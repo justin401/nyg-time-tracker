@@ -264,7 +264,7 @@ export default function TimeTracker({ session, onLogout }) {
     </Sel>
   );
 
-  const EntryForm = ({ title, showDates, onSave, saveLbl, saveBg, saveGlow }) => (
+  const renderEntryForm = (title, showDates, onSave, saveLbl, saveBg, saveGlow) => (
     <Card glow={C.glow} style={{ marginBottom: 20 }}>
       <div style={{ fontSize: 16, fontWeight: 700, color: C.accent, marginBottom: 16 }}>{title}</div>
       {showDates && (
@@ -353,9 +353,9 @@ export default function TimeTracker({ session, onLogout }) {
           )}
         </Card>
 
-        {panel === "clockOut" && <EntryForm title="Clock Out" showDates={false} onSave={saveClockOut} saveLbl="Save & Clock Out" saveBg={C.red} saveGlow={C.redGlow} />}
-        {panel === "manual" && <EntryForm title="Manual Time Entry" showDates={true} onSave={saveManual} />}
-        {panel === "edit" && <EntryForm title="Edit Time Entry" showDates={true} onSave={saveEdit} />}
+        {panel === "clockOut" && renderEntryForm("Clock Out", false, saveClockOut, "Save & Clock Out", C.red, C.redGlow)}
+        {panel === "manual" && renderEntryForm("Manual Time Entry", true, saveManual)}
+        {panel === "edit" && renderEntryForm("Edit Time Entry", true, saveEdit)}
 
         {panel === "addPrj" && (
           <Card glow={C.glow} style={{ marginBottom: 20 }}>
