@@ -12,8 +12,8 @@ const C = {
   catTravel: "#BB86FC", catOnSite: "#00E676", catCoord: "#29ABE2",
   catAdmin: "#FFB74D", catVideo: "#FF80AB",
 };
-const CATS = ["Travel", "On-Site", "Coordination", "Admin", "Video Updates"];
-const catColor = { Travel: C.catTravel, "On-Site": C.catOnSite, Coordination: C.catCoord, Admin: C.catAdmin, "Video Updates": C.catVideo };
+const CATS = ["Travel", "On-Site", "Coordination", "Admin", "Video Updates", "Virtual Assistance"];
+const catColor = { Travel: C.catTravel, "On-Site": C.catOnSite, Coordination: C.catCoord, Admin: C.catAdmin, "Video Updates": C.catVideo, "Virtual Assistance": "#4FC3F7" };
 const GET_RATE = 0.04712;
 
 const fm = {
