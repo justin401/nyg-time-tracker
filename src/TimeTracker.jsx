@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "./supabase";
+import jsPDF from "jspdf";
+import "jspdf-autotable";
 
 const C = {
   bg: "#0B1219", bg2: "#111D2B", card: "#15202E", card2: "#1A2836",
@@ -286,6 +288,118 @@ export default function TimeTracker({ session, onLogout }) {
     navigator.clipboard.writeText(t).then(() => alert("Copied to clipboard!"));
   };
 
+  const downloadWeekPDF = (wk) => {
+    const es = wkGroups[wk].sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+    const wjMs = es.filter(e => e.worker === "Justin K. Taparra").reduce((s, e) => s + e.duration_ms, 0);
+    const wsMs = es.filter(e => e.worker === "Sam Palompo").reduce((s, e) => s + e.duration_ms, 0);
+    const wjA = (Math.ceil(wjMs / 60000) / 60) * (proj?.j_rate || 75);
+    const wsA = (Math.ceil(wsMs / 60000) / 60) * (proj?.s_rate || 60);
+    const wS = wjA + wsA, wG = wS * GET_RATE, wT = wS + wG;
+
+    const doc = new jsPDF();
+    const pageW = doc.internal.pageSize.getWidth();
+
+    // Header
+    doc.setFillColor(11, 18, 25);
+    doc.rect(0, 0, pageW, 40, "F");
+    doc.setTextColor(232, 240, 254);
+    doc.setFontSize(24);
+    doc.setFont("helvetica", "bold");
+    doc.text("NYG LLC", 20, 22);
+    doc.setFontSize(8);
+    doc.setTextColor(41, 171, 226);
+    doc.text("SERVICED AT THE HIGHEST LEVEL", 20, 30);
+
+    // Invoice info
+    doc.setTextColor(100, 100, 100);
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.text("WEEKLY INVOICE", pageW - 20, 16, { align: "right" });
+    doc.setFontSize(9);
+    doc.text(`Week of: ${fm.date(wk)}`, pageW - 20, 23, { align: "right" });
+    doc.text(`Generated: ${fm.date(new Date())}`, pageW - 20, 29, { align: "right" });
+
+    // Project name
+    doc.setTextColor(41, 171, 226);
+    doc.setFontSize(12);
+    doc.setFont("helvetica", "bold");
+    doc.text(proj.name, 20, 52);
+
+    // Table
+    const tableData = es.map(e => [
+      fm.date(e.start_time),
+      e.worker.split(" ")[0],
+      fm.hrs(e.duration_ms),
+      fm.money(getRate(e.worker)) + "/hr",
+      e.category,
+      e.description.length > 50 ? e.description.substring(0, 47) + "..." : e.description,
+    ]);
+
+    doc.autoTable({
+      startY: 58,
+      head: [["Date", "Worker", "Hours", "Rate", "Category", "Description"]],
+      body: tableData,
+      theme: "grid",
+      headStyles: { fillColor: [21, 32, 46], textColor: [232, 240, 254], fontSize: 8, fontStyle: "bold" },
+      bodyStyles: { fontSize: 8, textColor: [60, 60, 60] },
+      alternateRowStyles: { fillColor: [245, 247, 250] },
+      columnStyles: {
+        0: { cellWidth: 25 },
+        1: { cellWidth: 20 },
+        2: { cellWidth: 16, halign: "right" },
+        3: { cellWidth: 22 },
+        4: { cellWidth: 28 },
+        5: { cellWidth: "auto" },
+      },
+      margin: { left: 20, right: 20 },
+    });
+
+    const finalY = doc.lastAutoTable.finalY + 10;
+
+    // Summary box
+    doc.setFillColor(245, 247, 250);
+    doc.roundedRect(20, finalY, pageW - 40, 52, 3, 3, "F");
+
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(100, 100, 100);
+
+    const col1 = 30, col2 = pageW - 30;
+    let y = finalY + 12;
+
+    doc.text(`Justin K. Taparra: ${(Math.ceil(wjMs / 60000) / 60).toFixed(2)} hrs x $${proj?.j_rate || 75}/hr`, col1, y);
+    doc.text(fm.money(wjA), col2, y, { align: "right" });
+    y += 8;
+    doc.text(`Sam Palompo: ${(Math.ceil(wsMs / 60000) / 60).toFixed(2)} hrs x $${proj?.s_rate || 60}/hr`, col1, y);
+    doc.text(fm.money(wsA), col2, y, { align: "right" });
+    y += 8;
+
+    doc.setDrawColor(200, 200, 200);
+    doc.line(col1, y - 3, col2, y - 3);
+
+    doc.text("Subtotal:", col1, y);
+    doc.text(fm.money(wS), col2, y, { align: "right" });
+    y += 8;
+    doc.text("GET (4.712%):", col1, y);
+    doc.text(fm.money(wG), col2, y, { align: "right" });
+    y += 10;
+
+    doc.setFontSize(13);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(0, 150, 76);
+    doc.text("TOTAL DUE:", col1, y);
+    doc.text(fm.money(wT), col2, y, { align: "right" });
+
+    // Footer
+    const footerY = doc.internal.pageSize.getHeight() - 15;
+    doc.setFontSize(7);
+    doc.setTextColor(150, 150, 150);
+    doc.setFont("helvetica", "normal");
+    doc.text("NYG LLC | Serviced at the Highest Level", pageW / 2, footerY, { align: "center" });
+
+    doc.save(`NYG-Invoice-${fm.date(wk).replace(/[^a-zA-Z0-9]/g, "-")}.pdf`);
+  };
+
   const WorkerSel = ({ value, onChange }) => (
     <Sel value={value} onChange={onChange}>
       <option value="Justin K. Taparra">Justin K. Taparra ({fm.money(proj?.j_rate || 75)}/hr)</option>
@@ -528,7 +642,10 @@ export default function TimeTracker({ session, onLogout }) {
                 <Card key={wk} style={{ marginBottom: 16 }}>
                   <div className="report-week-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
                     <div style={{ fontWeight: 700, fontSize: 14, color: C.accent }}>Week of {fm.date(wk)}</div>
-                    <Btn bg={C.accent} glow={C.glowSm} onClick={() => copyWeek(wk)} style={{ padding: "6px 14px", fontSize: 12 }}>Copy for QuickBooks</Btn>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <Btn bg={C.green} glow={C.greenGlow} onClick={() => downloadWeekPDF(wk)} style={{ padding: "6px 14px", fontSize: 12 }}>Download PDF</Btn>
+                      <Btn bg={C.accent} glow={C.glowSm} onClick={() => copyWeek(wk)} style={{ padding: "6px 14px", fontSize: 12 }}>Copy for QuickBooks</Btn>
+                    </div>
                   </div>
                   <div style={{ overflowX: "auto" }}>
                     <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
