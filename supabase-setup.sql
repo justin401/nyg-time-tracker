@@ -62,6 +62,7 @@ CREATE TABLE public.time_entries (
   start_time TIMESTAMPTZ NOT NULL,
   end_time TIMESTAMPTZ NOT NULL,
   duration_ms BIGINT NOT NULL,
+  work_location TEXT DEFAULT NULL,  -- 'office' or 'home' (Chloe only, for location-based pay)
   created_by UUID REFERENCES public.profiles(id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
