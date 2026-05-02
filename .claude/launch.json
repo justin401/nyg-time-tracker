@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "nyg-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 5173
+    },
+    {
+      "name": "email-preview",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-c", "import http.server, os; os.chdir('/Users/justintaparra'); http.server.test(HandlerClass=http.server.SimpleHTTPRequestHandler, port=8777)"],
+      "port": 8777
+    }
+  ]
+}
