@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192">
+  <!-- Background -->
+  <rect width="192" height="192" rx="40" fill="#0B1219"/>
+  <!-- Outer clock ring -->
+  <circle cx="96" cy="96" r="62" fill="none" stroke="#3b82f6" stroke-width="8"/>
+  <!-- Clock hands -->
+  <line x1="96" y1="96" x2="96" y2="46" stroke="#e2e8f0" stroke-width="7" stroke-linecap="round"/>
+  <line x1="96" y1="96" x2="128" y2="112" stroke="#60a5fa" stroke-width="6" stroke-linecap="round"/>
+  <!-- Center dot -->
+  <circle cx="96" cy="96" r="5" fill="#e2e8f0"/>
+  <!-- NYG label -->
+  <text x="96" y="148" text-anchor="middle" font-family="-apple-system, sans-serif"
+        font-size="16" font-weight="700" fill="#60a5fa" letter-spacing="2">NYG</text>
+</svg>
