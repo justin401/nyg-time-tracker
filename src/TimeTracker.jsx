@@ -757,7 +757,7 @@ export default function TimeTracker({ session, onLogout }) {
 
       {/* Nav */}
       <div style={{ display: "flex", background: C.bg2, borderBottom: `1px solid ${C.border}`, overflowX: "auto" }}>
-        {[...(isChloe ? ["dashboard", "entries", "reports"] : isAdmin ? ["dashboard", "entries", "reports", "invoices", "admin"] : ["dashboard", "entries", "reports", "invoices"])].map(v => (
+        {[...(isAgentCare ? ["dashboard", "entries", "reports"] : isAdmin ? ["dashboard", "entries", "reports", "invoices", "admin"] : ["dashboard", "entries", "reports", "invoices"])].map(v => (
           <button key={v} onClick={() => setView(v)} style={{ flex: 1, padding: "14px 0", border: "none", background: "transparent", borderBottom: view === v ? `3px solid ${C.accent}` : "3px solid transparent", color: view === v ? C.accent : C.dim, fontWeight: 700, fontSize: 13, cursor: "pointer", textTransform: "uppercase", letterSpacing: 1.5, textShadow: view === v ? `0 0 10px ${C.accent}` : "none" }}>{v}</button>
         ))}
       </div>
