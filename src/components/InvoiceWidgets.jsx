@@ -1,6 +1,7 @@
 import { useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { isGetEligibleWorker } from "../lib/workerPay";
 
 const GET_RATE = 0.04712;
 
@@ -327,11 +328,12 @@ export function RateHistory({ changes = [], fm, C }) {
 // entriesByProject: { [projectId]: [entry, ...] }
 // fm: formatter object (same as TimeTracker fm)
 // getRate: (worker, entry) => number  -- the per-entry rate function from the app
-export function generateMultiProjectPDF(projects, entriesByProject, fm, getRate) {
+export function generateMultiProjectPDF(projects, entriesByProject, fm, getRate, workerConfigs = {}) {
   const doc = new jsPDF();
   const pageW = doc.internal.pageSize.getWidth();
 
   let grandSubtotal = 0;
+  let grandGetEligible = 0;
   let isFirstPage = true;
 
   for (const proj of projects) {
@@ -425,9 +427,15 @@ export function generateMultiProjectPDF(projects, entriesByProject, fm, getRate)
     }
 
     const projSubtotal = Object.values(workerAmounts).reduce((s, a) => s + a, 0);
-    const projGet = projSubtotal * GET_RATE;
+    // GET applies only to client-billable hours (Justin / Sam); contractor
+    // wages (Chloe, Desmond) are excluded from the GET base.
+    const projGetBase = Object.entries(workerAmounts)
+      .filter(([w]) => isGetEligibleWorker(w, workerConfigs))
+      .reduce((s, [, a]) => s + a, 0);
+    const projGet = projGetBase * GET_RATE;
     const projTotal = projSubtotal + projGet;
     grandSubtotal += projSubtotal;
+    grandGetEligible += projGetBase;
 
     const workers = Object.keys(workerAmounts).sort();
     const boxHeight = 24 + workers.length * 8 + 22;
@@ -497,17 +505,23 @@ export function generateMultiProjectPDF(projects, entriesByProject, fm, getRate)
   doc.setFont("helvetica", "bold");
   doc.text("Grand Total Summary", 20, 52);
 
-  // Per-project summary table
+  // Per-project summary table. GET applies only to client-billable hours;
+  // contractor wages (Chloe, Desmond) excluded from the GET base.
   const summaryRows = projects
     .filter(p => entriesByProject[p.id]?.length > 0)
     .map(proj => {
       const entries = entriesByProject[proj.id] || [];
-      const projSubtotal = entries.reduce((sum, e) => {
+      let projSubtotal = 0;
+      let projGetBase = 0;
+      for (const e of entries) {
         const rate = getRate(e.worker, e);
-        return sum + (Math.ceil(e.duration_ms / 60000) / 60) * rate;
-      }, 0);
-      const projTotal = projSubtotal * (1 + GET_RATE);
-      return [proj.name, fm.money(projSubtotal), fm.money(projSubtotal * GET_RATE), fm.money(projTotal)];
+        const amount = (Math.ceil(e.duration_ms / 60000) / 60) * rate;
+        projSubtotal += amount;
+        if (isGetEligibleWorker(e.worker, workerConfigs)) projGetBase += amount;
+      }
+      const projGet = projGetBase * GET_RATE;
+      const projTotal = projSubtotal + projGet;
+      return [proj.name, fm.money(projSubtotal), fm.money(projGet), fm.money(projTotal)];
     });
 
   autoTable(doc, {
@@ -533,7 +547,7 @@ export function generateMultiProjectPDF(projects, entriesByProject, fm, getRate)
   });
 
   const summaryFinalY = doc.lastAutoTable.finalY + 16;
-  const grandGet = grandSubtotal * GET_RATE;
+  const grandGet = grandGetEligible * GET_RATE;
   const grandTotal = grandSubtotal + grandGet;
 
   // Grand total box

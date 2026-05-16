@@ -279,6 +279,26 @@ function calcTieredWeeklyOtPay(entries, cfg) {
   };
 }
 
+// Hawaii GET (General Excise Tax) is collected on client-billable revenue
+// (Justin / Sam project hours), NOT on wages paid to 1099 contractors
+// (Chloe, Desmond). Workers with a worker_config are hourly contractors and
+// are GET-exempt by definition; everyone else routes through project rates
+// and is billed to clients with GET passed through.
+export function isGetEligibleWorker(workerName, configs) {
+  return !getWorkerConfig(workerName, configs);
+}
+
+// Sum pay across a byWorker-style map, including only GET-eligible workers.
+// Accepts entries shaped like { [worker]: { pay } } OR { [worker]: { totalPay } }.
+export function getEligibleSubtotal(byWorker, configs) {
+  let sum = 0;
+  for (const [worker, data] of Object.entries(byWorker || {})) {
+    if (!isGetEligibleWorker(worker, configs)) continue;
+    sum += Number(data?.pay ?? data?.totalPay ?? 0);
+  }
+  return sum;
+}
+
 // Helper for tagging an entry as straight vs OT based on weekly running total.
 // Useful for PDF rendering where each line wants to show "$36" vs "$54".
 // Returns { rate, isOt } for the given entry, given all entries that share its

@@ -6,7 +6,7 @@ import { HeatMap, TrendChart, ComparisonCards, EarningsForecast, LiveBadge, Earn
 import { SearchBar, DateRangeFilter, exportCSV, BulkEditBar, detectDuplicates, BudgetTracker, DarkModeToggle } from "./components/AdminTools";
 import { InvoiceHistory, PaymentStatusBadge } from "./components/InvoiceWidgets";
 import AdminPanel from "./components/AdminPanel";
-import { loadWorkerConfigs, getEntryRate, calcWorkerPay } from "./lib/workerPay";
+import { loadWorkerConfigs, getEntryRate, calcWorkerPay, isGetEligibleWorker } from "./lib/workerPay";
 
 // Default theme (dark navy)
 const C_DEFAULT = {
@@ -266,7 +266,13 @@ export default function TimeTracker({ session, onLogout }) {
   // Agent-care pay routes through the engine: Chloe = tiered_location, Desmond = weekly_ot.
   const cAmt = calcWorkerPay("Chloe Mello", pe, workerConfigs, { projectRates }).totalPay;
   const dAmt = calcWorkerPay("Desmond Mello", pe, workerConfigs, { projectRates }).totalPay;
-  const sub = jAmt + sAmt + cAmt + dAmt, getTax = sub * GET_RATE, total = sub + getTax;
+  const sub = jAmt + sAmt + cAmt + dAmt;
+  // GET applies only to client-billable hours (Justin / Sam). Contractor
+  // wages (Chloe, Desmond) are paid out of revenue, not billed to clients,
+  // so they never enter the GET base.
+  const getBase = jAmt + sAmt;
+  const getTax = getBase * GET_RATE;
+  const total = sub + getTax;
   const catData = CATS.map(c => ({ c, ms: pe.filter(e => e.category === c).reduce((s, e) => s + e.duration_ms, 0) })).filter(x => x.ms > 0);
   const catMax = catData.length ? Math.max(...catData.map(x => x.ms)) : 1;
 
@@ -484,13 +490,19 @@ export default function TimeTracker({ session, onLogout }) {
       workerTotals[e.worker].pay += (Math.ceil(e.duration_ms / 60000) / 60) * getRate(e.worker, e);
     });
     const wS = Object.values(workerTotals).reduce((s, w) => s + w.pay, 0);
-    const wG = wS * GET_RATE, wT = wS + wG;
+    // GET applies only to client-billable hours; contractor wages excluded.
+    const wGBase = Object.entries(workerTotals)
+      .filter(([w]) => isGetEligibleWorker(w, workerConfigs || {}))
+      .reduce((s, [, d]) => s + d.pay, 0);
+    const wG = wGBase * GET_RATE, wT = wS + wG;
     let t = `NYG LLC - Weekly Report\nProject: ${proj.name}\nWeek of: ${fm.date(wk)}\n\nDate | Worker | Hours | Rate | Location | Category | Description\n-----|--------|-------|------|----------|----------|------------\n`;
     es.forEach(e => { t += `${fm.date(e.start_time)} | ${e.worker} | ${fm.hrs(e.duration_ms)} | $${getRate(e.worker, e)}/hr | ${e.work_location || "-"} | ${e.category} | ${e.description}\n`; });
     Object.entries(workerTotals).forEach(([worker, data]) => {
       t += `\n${worker}: ${(Math.ceil(data.ms / 60000) / 60).toFixed(2)} hrs = ${fm.money(data.pay)}`;
     });
-    t += `\nSubtotal: ${fm.money(wS)}\nGET (4.712%): ${fm.money(wG)}\nTotal: ${fm.money(wT)}`;
+    t += `\nSubtotal: ${fm.money(wS)}`;
+    if (wG > 0) t += `\nGET (4.712%): ${fm.money(wG)}`;
+    t += `\nTotal: ${fm.money(wT)}`;
     navigator.clipboard.writeText(t).then(() => alert("Copied to clipboard!"));
   };
 
@@ -506,7 +518,11 @@ export default function TimeTracker({ session, onLogout }) {
       workerTotals[e.worker].pay += hrs * getRate(e.worker, e);
     });
     const wS = Object.values(workerTotals).reduce((s, w) => s + w.pay, 0);
-    const wG = wS * GET_RATE, wT = wS + wG;
+    // GET applies only to client-billable hours; contractor wages excluded.
+    const wGBase = Object.entries(workerTotals)
+      .filter(([w]) => isGetEligibleWorker(w, workerConfigs || {}))
+      .reduce((s, [, d]) => s + d.pay, 0);
+    const wG = wGBase * GET_RATE, wT = wS + wG;
     const workerCount = Object.keys(workerTotals).length;
 
     const doc = new jsPDF();
@@ -616,9 +632,13 @@ export default function TimeTracker({ session, onLogout }) {
     doc.text("Subtotal:", col1, y);
     doc.text(fm.money(wS), col2, y, { align: "right" });
     y += 8;
-    doc.text("GET (4.712%):", col1, y);
-    doc.text(fm.money(wG), col2, y, { align: "right" });
-    y += 10;
+    if (wG > 0) {
+      doc.text("GET (4.712%):", col1, y);
+      doc.text(fm.money(wG), col2, y, { align: "right" });
+      y += 10;
+    } else {
+      y += 2;
+    }
 
     doc.setFontSize(13);
     doc.setFont("helvetica", "bold");
@@ -988,7 +1008,11 @@ export default function TimeTracker({ session, onLogout }) {
                 wkWorkerTotals[e.worker].pay += (Math.ceil(e.duration_ms / 60000) / 60) * getRate(e.worker, e);
               });
               const wS = Object.values(wkWorkerTotals).reduce((s, w) => s + w.pay, 0);
-              const wG = wS * GET_RATE, wT = wS + wG;
+              // GET applies only to client-billable hours; contractor wages excluded.
+              const wGBase = Object.entries(wkWorkerTotals)
+                .filter(([w]) => isGetEligibleWorker(w, workerConfigs || {}))
+                .reduce((s, [, d]) => s + d.pay, 0);
+              const wG = wGBase * GET_RATE, wT = wS + wG;
               const hoursLabel = Object.entries(wkWorkerTotals).map(([w, d]) => `${w.split(" ")[0]}: ${(Math.ceil(d.ms / 60000) / 60).toFixed(2)}`).join(" | ");
               return (
                 <Card key={wk} style={{ marginBottom: 16 }}>

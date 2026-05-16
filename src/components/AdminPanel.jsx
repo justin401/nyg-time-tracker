@@ -2,7 +2,9 @@ import { useState, useMemo } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { DateRangeFilter, SearchBar, exportCSV } from "./AdminTools";
-import { getEntryRate, calcWorkerPay } from "../lib/workerPay";
+import { getEntryRate, calcWorkerPay, getEligibleSubtotal } from "../lib/workerPay";
+
+const GET_RATE = 0.04712;
 
 export default function AdminPanel({ entries, projects, activePrj, C, fm, getChloeRate, workerConfigs, supabase, session, onEntriesChange, onEditEntry, onDeleteEntry }) {
   const [workerFilter, setWorkerFilter] = useState("all");
@@ -62,6 +64,8 @@ export default function AdminPanel({ entries, projects, activePrj, C, fm, getChl
       };
     }
     const totalPay = Object.values(byWorker).reduce((s, w) => s + w.pay, 0);
+    const getEligiblePay = getEligibleSubtotal(byWorker, workerConfigs || {});
+    const getTax = getEligiblePay * GET_RATE;
     const byCategory = {};
     displayEntries.forEach(e => {
       if (!byCategory[e.category]) byCategory[e.category] = { ms: 0, pay: 0 };
@@ -69,7 +73,7 @@ export default function AdminPanel({ entries, projects, activePrj, C, fm, getChl
       const hrs = Math.ceil((e.duration_ms || 0) / 60000) / 60;
       byCategory[e.category].pay += hrs * getRate(e.worker, e);
     });
-    return { totalMs, totalPay, byCategory, byWorker };
+    return { totalMs, totalPay, getEligiblePay, getTax, byCategory, byWorker };
   }, [displayEntries, workerConfigs, projectRates]);
 
   // Manual entry for any worker
@@ -287,11 +291,15 @@ export default function AdminPanel({ entries, projects, activePrj, C, fm, getChl
     doc.text(fm.money(summary.totalPay), col2, sy, { align: "right" });
     sy += 10;
 
-    const getTax = summary.totalPay * 0.04712;
-    doc.setFont("helvetica", "normal");
-    doc.text("GET Tax (4.712%):", col1, sy);
-    doc.text(fm.money(getTax), col2, sy, { align: "right" });
-    sy += 12;
+    // GET applies only to client-billable hours (Justin / Sam). Contractor
+    // wages (Chloe, Desmond) are excluded from the GET base.
+    const getTax = summary.getTax;
+    if (getTax > 0) {
+      doc.setFont("helvetica", "normal");
+      doc.text("GET Tax (4.712%):", col1, sy);
+      doc.text(fm.money(getTax), col2, sy, { align: "right" });
+      sy += 12;
+    }
 
     // Total due - big and green
     doc.setFontSize(14);
@@ -347,7 +355,7 @@ export default function AdminPanel({ entries, projects, activePrj, C, fm, getChl
       </div>
 
       {/* Summary */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 16 }} className="stats-grid">
+      <div style={{ display: "grid", gridTemplateColumns: summary.getTax > 0 ? "1fr 1fr 1fr" : "1fr 1fr", gap: 12, marginBottom: 16 }} className="stats-grid">
         <div style={cardStyle}>
           <div style={{ ...lblStyle, marginBottom: 6 }}>TOTAL HOURS</div>
           <div style={{ fontSize: 26, fontWeight: 800, color: C.accent }}>{fm.hrs(summary.totalMs)}</div>
@@ -356,13 +364,15 @@ export default function AdminPanel({ entries, projects, activePrj, C, fm, getChl
         <div style={cardStyle}>
           <div style={{ ...lblStyle, marginBottom: 6 }}>TOTAL PAY</div>
           <div style={{ fontSize: 26, fontWeight: 800, color: C.orange }}>{fm.money(summary.totalPay)}</div>
-          <div style={{ fontSize: 11, color: C.dim, marginTop: 4 }}>before GET tax</div>
+          <div style={{ fontSize: 11, color: C.dim, marginTop: 4 }}>{summary.getTax > 0 ? "before GET tax" : "no GET (contractor wages)"}</div>
         </div>
-        <div style={cardStyle}>
-          <div style={{ ...lblStyle, marginBottom: 6 }}>WITH GET TAX</div>
-          <div style={{ fontSize: 26, fontWeight: 800, color: C.green }}>{fm.money(summary.totalPay * 1.04712)}</div>
-          <div style={{ fontSize: 11, color: C.dim, marginTop: 4 }}>4.712% GET</div>
-        </div>
+        {summary.getTax > 0 && (
+          <div style={cardStyle}>
+            <div style={{ ...lblStyle, marginBottom: 6 }}>WITH GET TAX</div>
+            <div style={{ fontSize: 26, fontWeight: 800, color: C.green }}>{fm.money(summary.totalPay + summary.getTax)}</div>
+            <div style={{ fontSize: 11, color: C.dim, marginTop: 4 }}>4.712% GET on billable hours only</div>
+          </div>
+        )}
       </div>
 
       {/* Worker Breakdown */}
