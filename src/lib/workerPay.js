@@ -93,7 +93,7 @@ function chloeEntryRate(entry, cfg) {
 
 // HST-aware Monday week-key: returns YYYY-MM-DD of the Monday that anchors
 // the working week containing `date`. Used to bucket weekly_ot entries.
-function getWeekKey(date, timezone = 'Pacific/Honolulu') {
+export function getWeekKey(date, timezone = 'Pacific/Honolulu') {
   const fmt = new Intl.DateTimeFormat('en-CA', {
     timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short',
   });
@@ -277,6 +277,66 @@ function calcTieredWeeklyOtPay(entries, cfg) {
     regularPay, otPay,
     lumpSumTotal, totalPay: regularPay + otPay + lumpSumTotal,
   };
+}
+
+// For weekly-OT workers, split an entry into one or two segments depending
+// on whether its hours straddle the weekly 40-hour threshold. Returns an
+// array of { hours, rate, isOt } segments. Returns null for non-OT configs
+// (caller should fall back to single-rate row).
+//
+// sameWeekEntries: all entries for this worker in the SAME Mon-Sun HST week
+// as `entry`, including `entry` itself. Internal order doesn't need to be
+// sorted; we sort here.
+export function classifyEntrySegments(entry, sameWeekEntries, cfg) {
+  if (!cfg) return null;
+  // Unwrap history config
+  const resolved = resolveConfigForEntry(entry, cfg);
+  if (!resolved) return null;
+  if (resolved.type !== 'weekly_ot' && resolved.type !== 'tiered_weekly_ot') {
+    return null;
+  }
+
+  const sorted = [...sameWeekEntries].sort(
+    (a, b) => new Date(a.start_time) - new Date(b.start_time)
+  );
+
+  let cumulMs = 0;
+  for (const e of sorted) {
+    if (e === entry || e.id === entry.id) break;
+    cumulMs += e.duration_ms || 0;
+  }
+
+  const entryMs = entry.duration_ms || 0;
+  const thresholdMs = resolved.otThreshold * 3_600_000;
+  const newCumulMs = cumulMs + entryMs;
+
+  // Resolve straight + OT rates (handle probation tier for tiered_weekly_ot).
+  let straightRate, otRate;
+  if (resolved.type === 'weekly_ot') {
+    straightRate = resolved.straightRate;
+    otRate = resolved.otRate;
+  } else {
+    const t = new Date(entry.start_time);
+    const probationStart = new Date(resolved.probationStart);
+    const days = Math.floor((t - probationStart) / 86_400_000);
+    const tier = days >= resolved.probationDays ? 'after' : 'before';
+    straightRate = resolved.rates?.[tier]?.straight ?? 0;
+    otRate = resolved.rates?.[tier]?.ot ?? straightRate * 1.5;
+  }
+
+  if (newCumulMs <= thresholdMs) {
+    return [{ hours: entryMs / 3_600_000, rate: straightRate, isOt: false }];
+  }
+  if (cumulMs >= thresholdMs) {
+    return [{ hours: entryMs / 3_600_000, rate: otRate, isOt: true }];
+  }
+  // Straddle: split.
+  const regMs = thresholdMs - cumulMs;
+  const otMs = entryMs - regMs;
+  return [
+    { hours: regMs / 3_600_000, rate: straightRate, isOt: false },
+    { hours: otMs / 3_600_000, rate: otRate, isOt: true },
+  ];
 }
 
 // Hawaii GET (General Excise Tax) is collected on client-billable revenue

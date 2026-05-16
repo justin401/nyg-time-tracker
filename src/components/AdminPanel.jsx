@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { DateRangeFilter, SearchBar, exportCSV } from "./AdminTools";
-import { getEntryRate, calcWorkerPay, getEligibleSubtotal } from "../lib/workerPay";
+import { getEntryRate, calcWorkerPay, getEligibleSubtotal, classifyEntrySegments, getWeekKey } from "../lib/workerPay";
 
 const GET_RATE = 0.04712;
 
@@ -195,24 +195,66 @@ export default function AdminPanel({ entries, projects, activePrj, C, fm, getChl
     doc.text(`Project: ${proj?.name || "N/A"}`, 20, y);
     y += 10;
 
-    // ─── ENTRIES TABLE (two rows per entry: data + description) ───
+    // ─── ENTRIES TABLE ───
+    // Pre-bucket entries by worker + HST Mon-Sun week so OT segment
+    // classification has the full weekly context for each entry.
+    const weekBuckets = new Map();
+    sorted.forEach(e => {
+      const key = `${e.worker}|${getWeekKey(new Date(e.start_time))}`;
+      if (!weekBuckets.has(key)) weekBuckets.set(key, []);
+      weekBuckets.get(key).push(e);
+    });
+
     const tableBody = [];
+    const OT_BG = [255, 243, 224];        // pale orange tint
+    const OT_TEXT = [180, 100, 0];        // orange/amber for OT amounts + labels
     sorted.forEach((e, i) => {
-      const hrs = parseFloat(fm.hrs(e.duration_ms));
-      const rate = getRate(e.worker, e);
-      const amount = hrs * rate;
+      const cfg = (workerConfigs || {})[e.worker] || null;
+      const wkKey = `${e.worker}|${getWeekKey(new Date(e.start_time))}`;
+      const segs = classifyEntrySegments(e, weekBuckets.get(wkKey) || [e], cfg);
       const rowBg = i % 2 === 0 ? [255, 255, 255] : [245, 247, 250];
-      // Data row
-      tableBody.push([
-        { content: fm.date(e.start_time), styles: { fillColor: rowBg } },
-        { content: fm.time(e.start_time), styles: { fillColor: rowBg } },
-        { content: fm.time(e.end_time), styles: { fillColor: rowBg } },
-        { content: fm.hrs(e.duration_ms), styles: { fillColor: rowBg, halign: "right" } },
-        { content: e.work_location ? (e.work_location === "office" ? "Office" : "Home") : "-", styles: { fillColor: rowBg } },
-        { content: "$" + rate.toFixed(2) + "/hr", styles: { fillColor: rowBg } },
-        { content: "$" + amount.toFixed(2), styles: { fillColor: rowBg, halign: "right", fontStyle: "bold" } },
-      ]);
-      // Description row (spans all columns)
+      const startTime = new Date(e.start_time);
+      const endTime = new Date(e.end_time);
+      const loc = e.work_location ? (e.work_location === "office" ? "Office" : "Home") : "-";
+
+      if (!segs) {
+        // Non-OT workers: single row with the displayed rate.
+        const hrs = parseFloat(fm.hrs(e.duration_ms));
+        const rate = getRate(e.worker, e);
+        const amount = hrs * rate;
+        tableBody.push([
+          { content: fm.date(startTime), styles: { fillColor: rowBg } },
+          { content: fm.time(startTime), styles: { fillColor: rowBg } },
+          { content: fm.time(endTime), styles: { fillColor: rowBg } },
+          { content: fm.hrs(e.duration_ms), styles: { fillColor: rowBg, halign: "right" } },
+          { content: loc, styles: { fillColor: rowBg } },
+          { content: "$" + rate.toFixed(2) + "/hr", styles: { fillColor: rowBg } },
+          { content: "$" + amount.toFixed(2), styles: { fillColor: rowBg, halign: "right", fontStyle: "bold" } },
+        ]);
+      } else {
+        // OT-aware: emit 1 row (all straight or all OT) or 2 rows (straddle).
+        let cursorMs = startTime.getTime();
+        segs.forEach((seg, segIdx) => {
+          const segMs = seg.hours * 3_600_000;
+          const segStart = new Date(cursorMs);
+          const segEnd = new Date(cursorMs + segMs);
+          cursorMs += segMs;
+          const bg = seg.isOt ? OT_BG : rowBg;
+          const rateLabel = `$${seg.rate.toFixed(2)}/hr${seg.isOt ? " (OT)" : ""}`;
+          const amount = seg.hours * seg.rate;
+          const otStyles = seg.isOt ? { textColor: OT_TEXT, fontStyle: "bold" } : {};
+          tableBody.push([
+            { content: segIdx === 0 ? fm.date(startTime) : "", styles: { fillColor: bg } },
+            { content: fm.time(segStart), styles: { fillColor: bg } },
+            { content: fm.time(segEnd), styles: { fillColor: bg } },
+            { content: seg.hours.toFixed(2), styles: { fillColor: bg, halign: "right", ...otStyles } },
+            { content: segIdx === 0 ? loc : "", styles: { fillColor: bg } },
+            { content: rateLabel, styles: { fillColor: bg, ...otStyles } },
+            { content: "$" + amount.toFixed(2), styles: { fillColor: bg, halign: "right", fontStyle: "bold", ...(seg.isOt ? { textColor: OT_TEXT } : {}) } },
+          ]);
+        });
+      }
+      // Description row (one per entry, after all segments)
       tableBody.push([
         { content: e.description || "(no description)", colSpan: 7, styles: { fillColor: rowBg, fontSize: 7, textColor: [100, 100, 100], fontStyle: "italic", cellPadding: { top: 1, bottom: 4, left: 8, right: 8 } } },
       ]);
@@ -246,8 +288,20 @@ export default function AdminPanel({ entries, projects, activePrj, C, fm, getChl
     }
 
     // ─── SUMMARY BOX ───
+    // OT breakdown: when filtered to a single worker that has OT hours,
+    // render Regular and Overtime lines above the subtotal. For "all"
+    // filter, render any per-worker OT split inside the worker breakdown.
+    const otBreakdown = workerFilter !== "all" ? summary.byWorker[workerFilter] : null;
+    const showOtSplit = otBreakdown && otBreakdown.otHours > 0;
+    const allWorkersOtCount = workerFilter === "all"
+      ? Object.values(summary.byWorker).filter(w => w.otHours > 0).length
+      : 0;
+
     const boxX = 16, boxW = pageW - 32;
-    const boxH = workerFilter === "all" ? 82 + Object.keys(summary.byWorker).length * 10 : 72;
+    let boxH = workerFilter === "all"
+      ? 82 + Object.keys(summary.byWorker).length * 10 + allWorkersOtCount * 10
+      : 72;
+    if (showOtSplit) boxH += 22; // two extra lines (Regular + OT)
     doc.setFillColor(245, 247, 250);
     doc.roundedRect(boxX, finalY, boxW, boxH, 3, 3, "F");
     doc.setDrawColor(41, 171, 226);
@@ -266,15 +320,48 @@ export default function AdminPanel({ entries, projects, activePrj, C, fm, getChl
     doc.setFont("helvetica", "normal");
     doc.setTextColor(80, 80, 80);
 
-    // Worker breakdown (if showing all workers)
+    // Worker breakdown (if showing all workers). For OT workers, emit an
+    // indented "incl. X hrs OT @ $Y" line below their total.
     if (workerFilter === "all" && Object.keys(summary.byWorker).length > 1) {
       Object.entries(summary.byWorker).forEach(([worker, data]) => {
+        doc.setTextColor(80, 80, 80);
         doc.text(`${worker}: ${fm.hrs(data.ms)} hrs`, col1, sy);
         doc.setFont("helvetica", "bold");
         doc.text(fm.money(data.pay), col2, sy, { align: "right" });
         doc.setFont("helvetica", "normal");
         sy += 10;
+        if (data.otHours > 0) {
+          const otRate = data.otPay / data.otHours;
+          doc.setFontSize(9);
+          doc.setTextColor(180, 100, 0);
+          doc.text(`   incl. ${data.otHours.toFixed(2)} hrs OT @ ${fm.money(otRate)}/hr (1.5x)`, col1, sy);
+          doc.text(fm.money(data.otPay), col2, sy, { align: "right" });
+          doc.setFontSize(10);
+          doc.setTextColor(80, 80, 80);
+          sy += 10;
+        }
       });
+      doc.setDrawColor(200, 200, 200);
+      doc.line(col1, sy - 4, col2, sy - 4);
+    }
+
+    // Regular + OT breakdown when filtered to a single OT worker.
+    if (showOtSplit) {
+      const regRate = otBreakdown.regularHours > 0 ? otBreakdown.regularPay / otBreakdown.regularHours : 0;
+      const otRate = otBreakdown.otPay / otBreakdown.otHours;
+      doc.setTextColor(80, 80, 80);
+      doc.text(`Regular: ${otBreakdown.regularHours.toFixed(2)} hrs @ ${fm.money(regRate)}/hr`, col1, sy);
+      doc.setFont("helvetica", "bold");
+      doc.text(fm.money(otBreakdown.regularPay), col2, sy, { align: "right" });
+      doc.setFont("helvetica", "normal");
+      sy += 10;
+      doc.setTextColor(180, 100, 0);
+      doc.text(`Overtime: ${otBreakdown.otHours.toFixed(2)} hrs @ ${fm.money(otRate)}/hr (1.5x)`, col1, sy);
+      doc.setFont("helvetica", "bold");
+      doc.text(fm.money(otBreakdown.otPay), col2, sy, { align: "right" });
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(80, 80, 80);
+      sy += 10;
       doc.setDrawColor(200, 200, 200);
       doc.line(col1, sy - 4, col2, sy - 4);
     }
