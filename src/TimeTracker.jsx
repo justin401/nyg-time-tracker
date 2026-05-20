@@ -200,7 +200,7 @@ export default function TimeTracker({ session, onLogout }) {
         const [{ data: prjs }, { data: ents }, { data: clk }, configs] = await Promise.all([
           supabase.from("projects").select("*").order("created_at"),
           supabase.from("time_entries").select("*").order("start_time"),
-          supabase.from("clock_status").select("*").eq("user_id", session.user.id).limit(1),
+          supabase.from("clock_status").select("*").eq("user_id", session.user.id).order("created_at", { ascending: false }).limit(1),
           loadWorkerConfigs(supabase, { force: true }),
         ]);
         setProjects(prjs || []);
@@ -244,6 +244,31 @@ export default function TimeTracker({ session, onLogout }) {
     } else { setElapsed(0); }
     return () => clearInterval(timerRef.current);
   }, [clocking]);
+
+  // ── REALTIME CLOCK SYNC ──
+  // Keep this device's clocking state in sync with clock_status changes made
+  // elsewhere (other browser tab, phone PWA, manual DB edit). Without this,
+  // clocking out on phone leaves the laptop's UI showing a stale elapsed timer.
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    const channel = supabase
+      .channel(`clock_status_self_${session.user.id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "clock_status", filter: `user_id=eq.${session.user.id}` },
+        (payload) => {
+          if (payload.eventType === "DELETE") {
+            setClocking(null);
+            clockRef.current = null;
+          } else if (payload.eventType === "INSERT" || payload.eventType === "UPDATE") {
+            setClocking(payload.new);
+            clockRef.current = payload.new;
+          }
+        }
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [session?.user?.id]);
 
   // ── DERIVED ──
   const visibleProjects = showArchived ? projects : projects.filter(p => !p.archived);
@@ -314,6 +339,10 @@ export default function TimeTracker({ session, onLogout }) {
 
   // ── ACTIONS ──
   const clockIn = async () => {
+    // Defensive cleanup: remove any stale rows for this user before inserting.
+    // Combined with the clock_status_user_id_key UNIQUE constraint, this guarantees
+    // exactly one open session per user even across multiple devices.
+    await supabase.from("clock_status").delete().eq("user_id", session.user.id);
     const row = { user_id: session.user.id, project_id: activePrj, start_time: new Date().toISOString() };
     const { data, error } = await supabase.from("clock_status").insert(row).select().single();
     if (error) return showStatus("Clock in failed: " + error.message, C.red);
@@ -339,7 +368,9 @@ export default function TimeTracker({ session, onLogout }) {
     const entry = { project_id: clocking.project_id, worker: form.worker, category: form.cat, description: form.desc, start_time: clocking.start_time, end_time: end, duration_ms: dur, created_by: session.user.id, ...(form.location ? { work_location: form.location } : {}) };
     const { data, error } = await supabase.from("time_entries").insert(entry).select().single();
     if (error) return showStatus("Save failed: " + error.message, C.red);
-    await supabase.from("clock_status").delete().eq("id", clocking.id);
+    // Delete by user_id (not id) so any stray sibling rows for this user are
+    // also cleared. Belt-and-suspenders alongside the UNIQUE constraint.
+    await supabase.from("clock_status").delete().eq("user_id", session.user.id);
     setEntries([...entries, data]);
     setClocking(null);
     clockRef.current = null;

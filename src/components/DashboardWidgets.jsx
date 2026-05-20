@@ -413,13 +413,22 @@ export function LiveBadge({ supabase, C }) {
   useEffect(() => {
     if (!supabase) return;
 
-    // Initial fetch
+    // Existence of a row in clock_status means "clocked in" — there is no
+    // status column on this table. Join with profiles to surface the worker's
+    // name, and normalize the start_time field name so the render block below
+    // can stay generic.
     const fetchStatus = async () => {
       const { data } = await supabase
         .from('clock_status')
-        .select('*')
-        .eq('status', 'in');
-      if (data) setClockedIn(data);
+        .select('id,user_id,start_time,profiles(name)');
+      if (data) {
+        setClockedIn(data.map(r => ({
+          id: r.id,
+          user_id: r.user_id,
+          name: r.profiles?.name || 'Unknown',
+          clock_in_time: r.start_time,
+        })));
+      }
     };
 
     fetchStatus();
