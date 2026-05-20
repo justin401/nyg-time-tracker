@@ -249,18 +249,35 @@ export default function TimeTracker({ session, onLogout }) {
   // Keep this device's clocking state in sync with clock_status changes made
   // elsewhere (other browser tab, phone PWA, manual DB edit). Without this,
   // clocking out on phone leaves the laptop's UI showing a stale elapsed timer.
+  //
+  // Filter is applied client-side (not via the channel `filter` option) because
+  // DELETE events default to PK-only payloads — a server-side filter on user_id
+  // would never match a DELETE unless REPLICA IDENTITY FULL is set on the table.
+  // Volume is tiny (one row per worker at most), so the over-fetch is free.
   useEffect(() => {
     if (!session?.user?.id) return;
     const channel = supabase
       .channel(`clock_status_self_${session.user.id}`)
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "clock_status", filter: `user_id=eq.${session.user.id}` },
+        { event: "*", schema: "public", table: "clock_status" },
         (payload) => {
+          const myId = session.user.id;
           if (payload.eventType === "DELETE") {
-            setClocking(null);
-            clockRef.current = null;
-          } else if (payload.eventType === "INSERT" || payload.eventType === "UPDATE") {
+            // payload.old may contain only { id } depending on REPLICA IDENTITY,
+            // so reconcile by re-fetching this user's current state.
+            (async () => {
+              const { data } = await supabase
+                .from("clock_status")
+                .select("*")
+                .eq("user_id", myId)
+                .order("created_at", { ascending: false })
+                .limit(1);
+              const row = data && data[0] ? data[0] : null;
+              setClocking(row);
+              clockRef.current = row;
+            })();
+          } else if (payload.new && payload.new.user_id === myId) {
             setClocking(payload.new);
             clockRef.current = payload.new;
           }
