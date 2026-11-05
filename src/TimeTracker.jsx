@@ -512,9 +512,10 @@ export default function TimeTracker({ session, onLogout }) {
     if (!form.desc.trim()) return;
     setPolishing(true);
     try {
+      const { data: { session } } = await supabase.auth.getSession();
       const r = await fetch("/api/polish", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token || ""}` },
         body: JSON.stringify({ text: form.desc }),
       });
       const d = await r.json();
