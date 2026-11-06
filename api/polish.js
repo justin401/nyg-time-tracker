@@ -48,14 +48,23 @@ export default async function handler(req, res) {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-opus-4-20250514",
-        max_tokens: 1000,
+        model: "claude-opus-5-5",
+        // Opus 5.5 always thinks and thinking counts toward max_tokens
+        max_tokens: 2000,
+        output_config: { effort: "low" },
         messages: [{
           role: "user",
           content: `Rewrite this work log entry to sound more formal and corporate for a client invoice. Keep it concise (1-3 sentences max). No preamble, no quotation marks, no em dashes. Just the polished text. Original: "${text}"`,
         }],
       }),
     });
+
+    // A failed Anthropic call must not look like success: this route used to
+    // answer 200 with the original text, which hid a retired model (11/6/26).
+    if (!response.ok) {
+      console.error("Polish Anthropic error:", response.status, await response.text());
+      return res.status(502).json({ error: "Failed to polish text" });
+    }
 
     const data = await response.json();
     const polished = data.content?.find((b) => b.type === "text")?.text || text;
