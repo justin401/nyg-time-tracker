@@ -149,7 +149,6 @@ export default function TimeTracker({ session, onLogout }) {
   const [view, setView] = useState("dashboard");
   const [panel, setPanel] = useState(null);
   const [form, setForm] = useState({});
-  const [polishing, setPolishing] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [status, setStatus] = useState({ text: "Loading...", color: C.orange });
   const [showArchived, setShowArchived] = useState(false);
@@ -507,23 +506,6 @@ export default function TimeTracker({ session, onLogout }) {
     URL.revokeObjectURL(url);
   };
 
-  // ── POLISH ──
-  const polish = async () => {
-    if (!form.desc.trim()) return;
-    setPolishing(true);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const r = await fetch("/api/polish", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token || ""}` },
-        body: JSON.stringify({ text: form.desc }),
-      });
-      const d = await r.json();
-      if (d.polished) setForm(prev => ({ ...prev, desc: d.polished }));
-    } catch (e) { console.log("Polish err:", e); }
-    setPolishing(false);
-  };
-
   // ── REPORTS ──
   const filteredPe = getFilteredEntries(pe);
   const wkGroups = {};
@@ -778,11 +760,6 @@ export default function TimeTracker({ session, onLogout }) {
       <div style={{ marginBottom: 16 }}>
         <Lbl>{isAgentCare ? "Notes (optional)" : "What did you work on? (required)"}</Lbl>
         <textarea value={form.desc} onChange={e => setForm({ ...form, desc: e.target.value })} placeholder={isAgentCare ? "Anything you want to note (optional)" : "Be detailed. Your client will see this on the invoice."} rows={isAgentCare ? 2 : 4} style={{ width: "100%", padding: 12, borderRadius: 8, border: `1px solid ${C.border}`, background: C.input, color: C.white, fontSize: 14, resize: "vertical", boxSizing: "border-box", outline: "none", fontFamily: "system-ui" }} />
-        {!isAgentCare && (
-          <div style={{ marginTop: 6 }}>
-            <button onClick={polish} disabled={polishing || !form.desc.trim()} style={{ background: "transparent", border: `1px solid ${C.accent}`, color: C.accent, borderRadius: 6, padding: "5px 14px", fontSize: 12, fontWeight: 600, cursor: polishing ? "default" : "pointer", opacity: (polishing || !form.desc.trim()) ? 0.4 : 1 }}>{polishing ? "Polishing..." : "Polish with AI (Opus)"}</button>
-          </div>
-        )}
       </div>
       <div style={{ display: "flex", gap: 10 }}>
         <Btn bg={saveBg || C.green} glow={saveGlow || C.greenGlow} onClick={onSave} disabled={!isAgentCare && !form.desc.trim()} style={{ flex: 1, fontSize: 15 }}>{saveLbl || "Save"}</Btn>
